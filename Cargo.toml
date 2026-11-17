@@ -1,5 +1,5 @@
 [package]
-name = "Tadbir Remote Support"
+name = "rustdesk"
 version = "1.5.3"
 authors = ["rustdesk <info@rustdesk.com>"]
 edition = "2021"

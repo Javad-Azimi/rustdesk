@@ -12,6 +12,30 @@ on:
       publish-update-metadata:
         type: boolean
         default: false
+      build-windows:
+        type: boolean
+        default: true
+      build-windows-sciter:
+        type: boolean
+        default: false
+      build-android:
+        type: boolean
+        default: false
+      build-web:
+        type: boolean
+        default: false
+      build-linux:
+        type: boolean
+        default: false
+      build-macos:
+        type: boolean
+        default: false
+      build-ios:
+        type: boolean
+        default: false
+      build-sbom:
+        type: boolean
+        default: false
 
 # NOTE: F-Droid builder script 'flutter/build_fdroid.sh' reads environment
 # variables from this workflow!
@@ -61,6 +85,8 @@ env:
   UPLOAD_ARTIFACT: "${{ inputs.upload-artifact }}"
   PUBLISH_UPDATE_METADATA: "${{ inputs.publish-update-metadata }}"
   SIGN_BASE_URL: "${{ secrets.SIGN_BASE_URL }}-2"
+  RENDEZVOUS_SERVER: "${{ vars.RENDEZVOUS_SERVER || secrets.RENDEZVOUS_SERVER }}"
+  RS_PUB_KEY: "${{ vars.RS_PUB_KEY || secrets.RS_PUB_KEY }}"
 
 jobs:
   validate-update-metadata-keys:
@@ -100,6 +126,7 @@ jobs:
         run: python res/update/generate_update_metadata.py check-key
 
   generate-sbom:
+    if: ${{ inputs.build-sbom }}
     needs: [validate-update-metadata-keys]
     runs-on: ubuntu-latest
 
@@ -133,6 +160,7 @@ jobs:
     uses: ./.github/workflows/bridge.yml
 
   build-RustDeskTempTopMostWindow:
+    if: ${{ inputs.build-windows }}
     needs: [validate-update-metadata-keys]
     uses: ./.github/workflows/third-party-RustDeskTempTopMostWindow.yml
     strategy:
@@ -155,6 +183,7 @@ jobs:
       target_version: Windows10
 
   build-for-windows-flutter:
+    if: ${{ inputs.build-windows }}
     name: ${{ matrix.job.target }}
     needs: [build-RustDeskTempTopMostWindow, generate-bridge]
     runs-on: ${{ matrix.job.os }}
@@ -194,6 +223,32 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           submodules: recursive
+
+      - name: Patch custom server, key, and app name
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+
+          cfg = Path("libs/hbb_common/src/config.rs")
+          text = cfg.read_text(encoding="utf-8")
+
+          server = os.environ.get("RENDEZVOUS_SERVER", "").strip()
+          pub_key = os.environ.get("RS_PUB_KEY", "").strip()
+
+          if server:
+              assert "rs-ny.rustdesk.com" in text, "rs-ny.rustdesk.com not found in config.rs"
+              text = text.replace("rs-ny.rustdesk.com", server)
+          if pub_key:
+              old_key = "OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw="
+              assert old_key in text, "default RS_PUB_KEY not found in config.rs"
+              text = text.replace(old_key, pub_key)
+
+          text = text.replace(
+              'RwLock::new("RustDesk".to_owned())',
+              'RwLock::new("TadbirSupport".to_owned())',
+          )
+          cfg.write_text(text, encoding="utf-8")
 
       - name: Restore bridge files
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -410,8 +465,25 @@ jobs:
         if: env.UPLOAD_ARTIFACT == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: rustdesk-unsigned-windows-${{ matrix.job.arch }}
+          name: TadbirSupport-unsigned-windows-${{ matrix.job.arch }}
           path: rustdesk
+
+      - name: Pack portable TadbirSupport executable
+        if: env.UPLOAD_ARTIFACT == 'true'
+        run: |
+          cd libs/portable
+          pip3 install -r requirements.txt
+          python3 ./generate.py -f ../../rustdesk -o . -e ../../rustdesk/rustdesk.exe
+          cd ../..
+          New-Item -ItemType Directory -Force -Path portable-out | Out-Null
+          Move-Item -Force ./target/release/rustdesk-portable-packer.exe "./portable-out/TadbirSupport-${{ env.VERSION }}-${{ matrix.job.arch }}.exe"
+
+      - name: Upload portable TadbirSupport executable
+        if: env.UPLOAD_ARTIFACT == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: TadbirSupport-portable-windows-${{ matrix.job.arch }}
+          path: portable-out
 
       - name: Sign rustdesk files
         if: env.UPLOAD_ARTIFACT == 'true' && env.SIGN_BASE_URL != '-2'
@@ -581,6 +653,7 @@ jobs:
 
   # The fallback for the flutter version, we use Sciter for 32bit Windows.
   build-for-windows-sciter:
+    if: ${{ inputs.build-windows-sciter }}
     name: ${{ matrix.job.target }} (${{ matrix.job.os }})
     needs: [validate-update-metadata-keys]
     runs-on: ${{ matrix.job.os }}
@@ -611,6 +684,32 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           submodules: recursive
+
+      - name: Patch custom server, key, and app name
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+
+          cfg = Path("libs/hbb_common/src/config.rs")
+          text = cfg.read_text(encoding="utf-8")
+
+          server = os.environ.get("RENDEZVOUS_SERVER", "").strip()
+          pub_key = os.environ.get("RS_PUB_KEY", "").strip()
+
+          if server:
+              assert "rs-ny.rustdesk.com" in text, "rs-ny.rustdesk.com not found in config.rs"
+              text = text.replace("rs-ny.rustdesk.com", server)
+          if pub_key:
+              old_key = "OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw="
+              assert old_key in text, "default RS_PUB_KEY not found in config.rs"
+              text = text.replace(old_key, pub_key)
+
+          text = text.replace(
+              'RwLock::new("RustDesk".to_owned())',
+              'RwLock::new("TadbirSupport".to_owned())',
+          )
+          cfg.write_text(text, encoding="utf-8")
 
       - name: Install LLVM and Clang
         uses: rustdesk-org/install-llvm-action-32bit@6aa7d9ad3df84dff01cd4596dd0fc880a7f47fce # no release tag; commit 2026-05-26
@@ -793,7 +892,7 @@ jobs:
             ./SignOutput/rustdesk-*.exe
 
   build-rustdesk-ios:
-    if: ${{ inputs.upload-artifact }}
+    if: ${{ inputs.upload-artifact && inputs.build-ios }}
     name: build rustdesk ios ipa
     runs-on: ${{ matrix.job.os }}
     needs: [generate-bridge]
@@ -822,6 +921,32 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           submodules: recursive
+
+      - name: Patch custom server, key, and app name
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+
+          cfg = Path("libs/hbb_common/src/config.rs")
+          text = cfg.read_text(encoding="utf-8")
+
+          server = os.environ.get("RENDEZVOUS_SERVER", "").strip()
+          pub_key = os.environ.get("RS_PUB_KEY", "").strip()
+
+          if server:
+              assert "rs-ny.rustdesk.com" in text, "rs-ny.rustdesk.com not found in config.rs"
+              text = text.replace("rs-ny.rustdesk.com", server)
+          if pub_key:
+              old_key = "OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw="
+              assert old_key in text, "default RS_PUB_KEY not found in config.rs"
+              text = text.replace(old_key, pub_key)
+
+          text = text.replace(
+              'RwLock::new("RustDesk".to_owned())',
+              'RwLock::new("TadbirSupport".to_owned())',
+          )
+          cfg.write_text(text, encoding="utf-8")
 
       - name: Install flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
@@ -915,6 +1040,7 @@ jobs:
 
 
   build-for-macOS:
+    if: ${{ inputs.build-macos }}
     name: ${{ matrix.job.target }}
     runs-on: ${{ matrix.job.os }}
     needs: [generate-bridge]
@@ -951,6 +1077,32 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           submodules: recursive
+
+      - name: Patch custom server, key, and app name
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+
+          cfg = Path("libs/hbb_common/src/config.rs")
+          text = cfg.read_text(encoding="utf-8")
+
+          server = os.environ.get("RENDEZVOUS_SERVER", "").strip()
+          pub_key = os.environ.get("RS_PUB_KEY", "").strip()
+
+          if server:
+              assert "rs-ny.rustdesk.com" in text, "rs-ny.rustdesk.com not found in config.rs"
+              text = text.replace("rs-ny.rustdesk.com", server)
+          if pub_key:
+              old_key = "OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw="
+              assert old_key in text, "default RS_PUB_KEY not found in config.rs"
+              text = text.replace(old_key, pub_key)
+
+          text = text.replace(
+              'RwLock::new("RustDesk".to_owned())',
+              'RwLock::new("TadbirSupport".to_owned())',
+          )
+          cfg.write_text(text, encoding="utf-8")
 
       - name: Import the codesign cert
         if: env.MACOS_P12_BASE64 != null
@@ -1345,7 +1497,7 @@ jobs:
       - build-for-windows-flutter
       - build-for-windows-sciter
     runs-on: ubuntu-latest
-    if: ${{ inputs.upload-artifact }}
+    if: ${{ inputs.upload-artifact && inputs.build-macos && inputs.build-windows && inputs.build-windows-sciter }}
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -1426,6 +1578,7 @@ jobs:
           files: rustdesk-${{ env.VERSION }}-unsigned.tar.gz
 
   build-rustdesk-android:
+    if: ${{ inputs.build-android }}
     needs: [generate-bridge]
     name: build rustdesk android apk ${{ matrix.job.target }}
     runs-on: ${{ matrix.job.os }}
@@ -1511,6 +1664,32 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           submodules: recursive
+
+      - name: Patch custom server, key, and app name
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+
+          cfg = Path("libs/hbb_common/src/config.rs")
+          text = cfg.read_text(encoding="utf-8")
+
+          server = os.environ.get("RENDEZVOUS_SERVER", "").strip()
+          pub_key = os.environ.get("RS_PUB_KEY", "").strip()
+
+          if server:
+              assert "rs-ny.rustdesk.com" in text, "rs-ny.rustdesk.com not found in config.rs"
+              text = text.replace("rs-ny.rustdesk.com", server)
+          if pub_key:
+              old_key = "OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw="
+              assert old_key in text, "default RS_PUB_KEY not found in config.rs"
+              text = text.replace(old_key, pub_key)
+
+          text = text.replace(
+              'RwLock::new("RustDesk".to_owned())',
+              'RwLock::new("TadbirSupport".to_owned())',
+          )
+          cfg.write_text(text, encoding="utf-8")
 
       - name: Check JNI natives are in ffi.FFI
         # Custom clients rename com.carriez.flutter_hbb; only ffi.FFI keeps its name.
@@ -1735,7 +1914,7 @@ jobs:
   build-rustdesk-android-universal:
     needs: [build-rustdesk-android]
     name: build rustdesk android universal apk
-    if: ${{ inputs.upload-artifact }}
+    if: ${{ inputs.upload-artifact && inputs.build-android }}
     runs-on: ubuntu-24.04
     env:
       reltype: release
@@ -1798,6 +1977,32 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           submodules: recursive
+
+      - name: Patch custom server, key, and app name
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+
+          cfg = Path("libs/hbb_common/src/config.rs")
+          text = cfg.read_text(encoding="utf-8")
+
+          server = os.environ.get("RENDEZVOUS_SERVER", "").strip()
+          pub_key = os.environ.get("RS_PUB_KEY", "").strip()
+
+          if server:
+              assert "rs-ny.rustdesk.com" in text, "rs-ny.rustdesk.com not found in config.rs"
+              text = text.replace("rs-ny.rustdesk.com", server)
+          if pub_key:
+              old_key = "OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw="
+              assert old_key in text, "default RS_PUB_KEY not found in config.rs"
+              text = text.replace(old_key, pub_key)
+
+          text = text.replace(
+              'RwLock::new("RustDesk".to_owned())',
+              'RwLock::new("TadbirSupport".to_owned())',
+          )
+          cfg.write_text(text, encoding="utf-8")
 
       - name: Install flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
@@ -1918,6 +2123,7 @@ jobs:
             signed-apk/rustdesk-${{ env.VERSION }}-universal${{ env.suffix }}.apk
 
   build-rustdesk-linux:
+    if: ${{ inputs.build-linux }}
     needs: [generate-bridge]
     name: build rustdesk linux ${{ matrix.job.target }}
     runs-on: ${{ matrix.job.on }}
@@ -1965,6 +2171,32 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           submodules: recursive
+
+      - name: Patch custom server, key, and app name
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+
+          cfg = Path("libs/hbb_common/src/config.rs")
+          text = cfg.read_text(encoding="utf-8")
+
+          server = os.environ.get("RENDEZVOUS_SERVER", "").strip()
+          pub_key = os.environ.get("RS_PUB_KEY", "").strip()
+
+          if server:
+              assert "rs-ny.rustdesk.com" in text, "rs-ny.rustdesk.com not found in config.rs"
+              text = text.replace("rs-ny.rustdesk.com", server)
+          if pub_key:
+              old_key = "OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw="
+              assert old_key in text, "default RS_PUB_KEY not found in config.rs"
+              text = text.replace(old_key, pub_key)
+
+          text = text.replace(
+              'RwLock::new("RustDesk".to_owned())',
+              'RwLock::new("TadbirSupport".to_owned())',
+          )
+          cfg.write_text(text, encoding="utf-8")
 
       - name: Set Swap Space
         uses: pierotofy/set-swap-space@49819abfb41bd9b44fb781159c033dba90353a7c # v1.0
@@ -2272,6 +2504,7 @@ jobs:
   # old for it. A separate job rather than a matrix entry of build-rustdesk-linux: appimage and
   # flatpak need that job, and a failure here must not skip them.
   build-rustdesk-linux-drm:
+    if: ${{ inputs.build-linux }}
     needs: [generate-bridge]
     name: build rustdesk linux drm x86_64
     runs-on: ubuntu-22.04
@@ -2296,6 +2529,32 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           submodules: recursive
+
+      - name: Patch custom server, key, and app name
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+
+          cfg = Path("libs/hbb_common/src/config.rs")
+          text = cfg.read_text(encoding="utf-8")
+
+          server = os.environ.get("RENDEZVOUS_SERVER", "").strip()
+          pub_key = os.environ.get("RS_PUB_KEY", "").strip()
+
+          if server:
+              assert "rs-ny.rustdesk.com" in text, "rs-ny.rustdesk.com not found in config.rs"
+              text = text.replace("rs-ny.rustdesk.com", server)
+          if pub_key:
+              old_key = "OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw="
+              assert old_key in text, "default RS_PUB_KEY not found in config.rs"
+              text = text.replace(old_key, pub_key)
+
+          text = text.replace(
+              'RwLock::new("RustDesk".to_owned())',
+              'RwLock::new("TadbirSupport".to_owned())',
+          )
+          cfg.write_text(text, encoding="utf-8")
 
       - name: Set Swap Space
         uses: pierotofy/set-swap-space@49819abfb41bd9b44fb781159c033dba90353a7c # v1.0
@@ -2591,7 +2850,7 @@ jobs:
           path: ${{ env.DRM_DEB }}
 
   build-rustdesk-linux-sciter:
-    if: ${{ inputs.upload-artifact }}
+    if: ${{ inputs.upload-artifact && inputs.build-linux }}
     needs: [validate-update-metadata-keys]
     runs-on: ${{ matrix.job.on }}
     name: build-rustdesk-linux-sciter ${{ matrix.job.target }}
@@ -2632,6 +2891,32 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           submodules: recursive
+
+      - name: Patch custom server, key, and app name
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+
+          cfg = Path("libs/hbb_common/src/config.rs")
+          text = cfg.read_text(encoding="utf-8")
+
+          server = os.environ.get("RENDEZVOUS_SERVER", "").strip()
+          pub_key = os.environ.get("RS_PUB_KEY", "").strip()
+
+          if server:
+              assert "rs-ny.rustdesk.com" in text, "rs-ny.rustdesk.com not found in config.rs"
+              text = text.replace("rs-ny.rustdesk.com", server)
+          if pub_key:
+              old_key = "OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw="
+              assert old_key in text, "default RS_PUB_KEY not found in config.rs"
+              text = text.replace(old_key, pub_key)
+
+          text = text.replace(
+              'RwLock::new("RustDesk".to_owned())',
+              'RwLock::new("TadbirSupport".to_owned())',
+          )
+          cfg.write_text(text, encoding="utf-8")
 
       - name: Modify vcpkg.json for armv7
         if: matrix.job.vcpkg-triplet == 'arm-linux'
@@ -2837,7 +3122,7 @@ jobs:
     name: Build appimage ${{ matrix.job.target }}
     needs: [build-rustdesk-linux]
     runs-on: ubuntu-22.04
-    if: ${{ inputs.upload-artifact }}
+    if: ${{ inputs.upload-artifact && inputs.build-linux }}
     strategy:
       fail-fast: false
       matrix:
@@ -2849,6 +3134,32 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           submodules: recursive
+
+      - name: Patch custom server, key, and app name
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+
+          cfg = Path("libs/hbb_common/src/config.rs")
+          text = cfg.read_text(encoding="utf-8")
+
+          server = os.environ.get("RENDEZVOUS_SERVER", "").strip()
+          pub_key = os.environ.get("RS_PUB_KEY", "").strip()
+
+          if server:
+              assert "rs-ny.rustdesk.com" in text, "rs-ny.rustdesk.com not found in config.rs"
+              text = text.replace("rs-ny.rustdesk.com", server)
+          if pub_key:
+              old_key = "OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw="
+              assert old_key in text, "default RS_PUB_KEY not found in config.rs"
+              text = text.replace(old_key, pub_key)
+
+          text = text.replace(
+              'RwLock::new("RustDesk".to_owned())',
+              'RwLock::new("TadbirSupport".to_owned())',
+          )
+          cfg.write_text(text, encoding="utf-8")
 
       - name: Download Binary
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -2892,7 +3203,7 @@ jobs:
       - build-rustdesk-linux
       - build-rustdesk-linux-sciter
     runs-on: ${{ matrix.job.on }}
-    if: ${{ inputs.upload-artifact }}
+    if: ${{ inputs.upload-artifact && inputs.build-linux }}
     strategy:
       fail-fast: false
       matrix:
@@ -2925,6 +3236,32 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           submodules: recursive
+
+      - name: Patch custom server, key, and app name
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+
+          cfg = Path("libs/hbb_common/src/config.rs")
+          text = cfg.read_text(encoding="utf-8")
+
+          server = os.environ.get("RENDEZVOUS_SERVER", "").strip()
+          pub_key = os.environ.get("RS_PUB_KEY", "").strip()
+
+          if server:
+              assert "rs-ny.rustdesk.com" in text, "rs-ny.rustdesk.com not found in config.rs"
+              text = text.replace("rs-ny.rustdesk.com", server)
+          if pub_key:
+              old_key = "OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw="
+              assert old_key in text, "default RS_PUB_KEY not found in config.rs"
+              text = text.replace(old_key, pub_key)
+
+          text = text.replace(
+              'RwLock::new("RustDesk".to_owned())',
+              'RwLock::new("TadbirSupport".to_owned())',
+          )
+          cfg.write_text(text, encoding="utf-8")
 
       - name: Download Binary
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -2972,7 +3309,7 @@ jobs:
             flatpak/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.flatpak
 
   build-rustdesk-web:
-    if: False
+    if: ${{ inputs.build-web }}
     needs: [validate-update-metadata-keys]
     name: build-rustdesk-web
     runs-on: ubuntu-22.04
@@ -2987,6 +3324,32 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           submodules: recursive
+
+      - name: Patch custom server, key, and app name
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+
+          cfg = Path("libs/hbb_common/src/config.rs")
+          text = cfg.read_text(encoding="utf-8")
+
+          server = os.environ.get("RENDEZVOUS_SERVER", "").strip()
+          pub_key = os.environ.get("RS_PUB_KEY", "").strip()
+
+          if server:
+              assert "rs-ny.rustdesk.com" in text, "rs-ny.rustdesk.com not found in config.rs"
+              text = text.replace("rs-ny.rustdesk.com", server)
+          if pub_key:
+              old_key = "OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw="
+              assert old_key in text, "default RS_PUB_KEY not found in config.rs"
+              text = text.replace(old_key, pub_key)
+
+          text = text.replace(
+              'RwLock::new("RustDesk".to_owned())',
+              'RwLock::new("TadbirSupport".to_owned())',
+          )
+          cfg.write_text(text, encoding="utf-8")
 
       - name: Prepare env
         run: |
